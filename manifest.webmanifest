@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "My Schedule",
-  "short_name": "일정관리",
+  "name": "규림's Schedule",
+  "short_name": "규림일정",
   "lang": "ko-KR",
   "start_url": "./",
   "scope": "./",
