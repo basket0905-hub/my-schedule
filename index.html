@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-title" content="My Schedule">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<title>My Schedule</title>
+<title>규림's Schedule</title>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#f3f5f9}
 *{box-sizing:border-box}body{margin:0;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
@@ -33,7 +33,7 @@ footer{text-align:center;color:#98a1b1;font-size:11px;padding:20px}
 </style>
 </head>
 <body>
-<header><small>MY PERSONAL PLANNER</small><h1>My Schedule</h1><div class="date" id="today"></div></header>
+<header><small>MY PERSONAL PLANNER</small><h1>규림's Schedule</h1><div class="date" id="today"></div></header>
 <main>
 <section class="panel">
 <h2>새 일정 등록</h2>
@@ -102,7 +102,7 @@ $("notifyBtn").onclick=async()=>{
  if(!("Notification"in window)){alert("이 브라우저는 알림을 지원하지 않습니다.");return}
  const p=await Notification.requestPermission();$("status").textContent="알림 권한: "+p+(p==="granted"?" · 단, 이 첫 버전은 앱이 열려 있을 때 알림을 확인합니다.":"");
 };
-$("speakBtn").onclick=()=>speak("My Schedule 음성 안내 테스트입니다. 일정 관리 앱이 정상적으로 실행되고 있습니다.");
+$("speakBtn").onclick=()=>speak("규림's Schedule 음성 안내 테스트입니다. 일정 관리 앱이 정상적으로 실행되고 있습니다.");
 function speak(t){if(!("speechSynthesis"in window)){alert("이 브라우저는 음성 읽기를 지원하지 않습니다.");return}speechSynthesis.cancel();speechSynthesis.speak(new SpeechSynthesisUtterance(t))}
 $("voiceBtn").onclick=()=>{
  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
