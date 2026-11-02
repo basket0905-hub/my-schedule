@@ -1,3 +1,35 @@
-self.addEventListener('install',e=>{e.waitUntil(caches.open('my-schedule-v1').then(c=>c.addAll(['./','./index.html','./manifest.webmanifest','./icons/icon-192.png'])));self.skipWaiting()});
-self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
-self.addEventListener('fetch',e=>{if(e.request.method==='GET')e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)))});
+const CACHE_NAME = 'my-schedule-v2';
+
+self.addEventListener('install', event => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(cache =>
+      cache.addAll([
+        './',
+        './index.html',
+        './manifest.webmanifest',
+        './icons/icon-192.png'
+      ])
+    )
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(
+        keys.filter(key => key !== CACHE_NAME)
+            .map(key => caches.delete(key))
+      )
+    )
+  );
+  self.clients.claim();
+});
+
+self.addEventListener('fetch', event => {
+  if (event.request.method === 'GET') {
+    event.respondWith(
+      fetch(event.request).catch(() => caches.match(event.request))
+    );
+  }
+});
