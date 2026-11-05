@@ -6,10 +6,10 @@
 <meta name="theme-color" content="#172554">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="My Schedule">
+<meta name="apple-mobile-web-app-title" content="규림's Schedule">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<title>My Schedule</title>
+<title>규림's Schedule</title>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#f3f5f9}
 *{box-sizing:border-box}body{margin:0;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
@@ -49,6 +49,12 @@ footer{text-align:center;color:#98a1b1;font-size:11px;padding:20px}
 <button id="saveBtn" type="button">일정 저장</button>
 </div>
 <div id="status">일정은 이 기기의 브라우저 저장소에 보관됩니다. 브라우저 데이터 삭제 시 사라질 수 있습니다.</div>
+<div class="actions" style="margin-top:12px">
+<button class="secondary" id="backupBtn" type="button">⬇️ 일정 백업하기</button>
+<button class="secondary" id="restoreBtn" type="button">⬆️ 백업 파일 가져오기</button>
+</div>
+<input id="backupFile" type="file" accept="application/json,.json" hidden>
+<div class="meta">백업 파일은 JSON 형식입니다. 가져오기는 기존 일정을 지우지 않고 새 일정만 합칩니다.</div>
 </section>
 <section class="panel">
 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><h2 style="margin:0">등록된 일정</h2><button class="secondary" id="notifyBtn" type="button">알림 권한</button></div>
@@ -58,7 +64,7 @@ footer{text-align:center;color:#98a1b1;font-size:11px;padding:20px}
 <h2>음성 안내 테스트</h2>
 <div class="actions"><button class="secondary" id="speakBtn" type="button">🔊 안내 음성 재생</button><button class="secondary" id="installHelp" type="button">아이폰 설치 방법</button></div>
 </section>
-<footer>My Schedule · 규림용 일정 관리 앱</footer>
+<footer>규림's Schedule · 개인 일정 관리 앱</footer>
 </main>
 <script>
 const $=id=>document.getElementById(id);
@@ -97,6 +103,33 @@ $("saveBtn").onclick=()=>{
  if(editing){const old=entries.find(x=>x.id===editing);obj.done=old?.done||false;entries=entries.map(x=>x.id===editing?obj:x)}
  else entries.push(obj);
  editing=null;$("title").value="";$("saveBtn").textContent="일정 저장";persist();
+};
+
+// JSON 백업: 현재 기기의 일정 데이터를 파일로 내려받습니다.
+$("backupBtn").onclick=()=>{
+ const backup={app:"GyrimSchedule",version:1,exportedAt:new Date().toISOString(),entries};
+ const blob=new Blob([JSON.stringify(backup,null,2)],{type:"application/json;charset=utf-8"});
+ const url=URL.createObjectURL(blob);
+ const a=document.createElement("a");a.href=url;a.download="gyurim-schedule-backup-"+localDate(new Date())+".json";
+ document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+ $("status").textContent=entries.length+"개 일정을 백업 파일로 저장했습니다.";
+};
+$("restoreBtn").onclick=()=>$("backupFile").click();
+$("backupFile").onchange=async(event)=>{
+ const file=event.target.files?.[0];if(!file)return;
+ try{
+  const data=JSON.parse(await file.text());
+  if(!data||!Array.isArray(data.entries))throw new Error("백업 파일 형식이 올바르지 않습니다.");
+  const valid=data.entries.filter(e=>e&&typeof e.id==="string"&&typeof e.title==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(e.date)&&/^\d{2}:\d{2}$/.test(e.time));
+  if(!valid.length&&data.entries.length)throw new Error("가져올 수 있는 일정 데이터가 없습니다.");
+  const ids=new Set(entries.map(e=>e.id));
+  const added=valid.filter(e=>!ids.has(e.id));
+  entries=entries.concat(added.map(e=>({id:e.id,title:e.title,date:e.date,time:e.time,repeat:["none","daily","weekly","monthly"].includes(e.repeat)?e.repeat:"none",lead:Number.isFinite(Number(e.lead))?Number(e.lead):0,done:!!e.done})));
+  persist();
+  $("status").textContent=added.length+"개 일정을 가져왔습니다. 기존 일정 "+(entries.length-added.length)+"개는 유지했습니다.";
+  alert(added.length+"개 일정을 가져왔습니다. 기존 일정은 삭제하거나 덮어쓰지 않았습니다.");
+ }catch(error){alert("백업 파일을 읽지 못했습니다: "+error.message)}
+ event.target.value="";
 };
 $("notifyBtn").onclick=async()=>{
  if(!("Notification"in window)){alert("이 브라우저는 알림을 지원하지 않습니다.");return}
