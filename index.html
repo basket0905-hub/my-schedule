@@ -156,7 +156,7 @@ $("installHelp").onclick=()=>alert("아이폰에서 Safari로 배포 주소를 �
 // Foreground-only reminder check for this starter build.
 const fired=new Set();
 function checkReminders(){
- if(document.visibilityState!=="visible")return;
+ if(document.visibilityState!=="visible"||localStorage.getItem("mySchedulePushEnabled")==="true")return;
  const now=new Date();
  for(const e of entries){
   if(e.done)continue;
@@ -214,6 +214,7 @@ render();
      if(!data.endpoint||!keys.p256dh||!keys.auth)throw new Error("푸시 구독 정보를 읽지 못했습니다.");
      const {error:saveError}=await db.from("push_subscriptions").upsert({user_id:user.id,endpoint:data.endpoint,p256dh:keys.p256dh,auth:keys.auth,updated_at:new Date().toISOString()},{onConflict:"endpoint"});
      if(saveError)throw saveError;
+     localStorage.setItem("mySchedulePushEnabled","true");
      status("푸시 알림 구독 완료 · 서버 발송 예약 설정은 별도 단계가 남아 있습니다.");
      alert("이 기기의 푸시 알림 구독이 완료됐습니다.");
    }catch(error){status("푸시 설정 실패: "+(error.message||String(error)));alert("푸시 알림 설정 실패: "+(error.message||String(error)));}
