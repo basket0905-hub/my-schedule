@@ -10,6 +10,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <title>규림's Schedule</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#f3f5f9}
 *{box-sizing:border-box}body{margin:0;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
@@ -35,6 +36,15 @@ footer{text-align:center;color:#98a1b1;font-size:11px;padding:20px}
 <body>
 <header><small>MY PERSONAL PLANNER</small><h1>규림's Schedule</h1><div class="date" id="today"></div></header>
 <main>
+<section class="panel" id="cloudPanel">
+<h2>클라우드 계정 및 동기화</h2>
+<div class="field"><label for="cloudEmail">이메일</label><input id="cloudEmail" type="email" autocomplete="email" placeholder="이메일 주소"></div>
+<div class="field"><label for="cloudPassword">비밀번호</label><input id="cloudPassword" type="password" autocomplete="current-password" placeholder="비밀번호 (6자 이상)"></div>
+<div class="actions"><button class="secondary" id="cloudSignup" type="button">회원가입</button><button id="cloudLogin" type="button">로그인</button><button class="secondary" id="cloudLogout" type="button" disabled>로그아웃</button></div>
+<div class="actions" style="margin-top:10px"><button id="cloudSync" type="button" disabled>☁️ 지금 동기화</button></div>
+<div class="actions" style="margin-top:10px"><button class="secondary" id="pushEnable" type="button" disabled>🔔 푸시 알림 켜기</button></div>
+<div id="cloudStatus" class="meta">로그인 전에는 일정이 이 기기에만 저장됩니다.</div>
+</section>
 <section class="panel">
 <h2>새 일정 등록</h2>
 <div class="field"><label for="title">일정 내용</label><input id="title" placeholder="예: 병원 예약, 운동, 회의"></div>
@@ -74,7 +84,7 @@ $("today").textContent=today.toLocaleDateString("ko-KR",{year:"numeric",month:"l
 $("date").value=localDate(today);
 let entries=JSON.parse(localStorage.getItem("myScheduleEntries")||"[]");
 let editing=null;
-function persist(){localStorage.setItem("myScheduleEntries",JSON.stringify(entries));render()}
+function persist(){const previous=JSON.parse(localStorage.getItem("myScheduleEntries")||"[]");if(window.scheduleCloudTrackChanges)window.scheduleCloudTrackChanges(previous,entries);localStorage.setItem("myScheduleEntries",JSON.stringify(entries));render()}
 function repeatText(v){return ({none:"반복 없음",daily:"매일",weekly:"매주",monthly:"매월"})[v]||v}
 function render(){
  const el=$("list");el.innerHTML="";
@@ -146,7 +156,7 @@ $("installHelp").onclick=()=>alert("아이폰에서 Safari로 배포 주소를 �
 // Foreground-only reminder check for this starter build.
 const fired=new Set();
 function checkReminders(){
- if(document.visibilityState!=="visible")return;
+ if(document.visibilityState!=="visible"||localStorage.getItem("mySchedulePushEnabled")==="true")return;
  const now=new Date();
  for(const e of entries){
   if(e.done)continue;
@@ -163,5 +173,78 @@ function checkReminders(){
 setInterval(checkReminders,15000);document.addEventListener("visibilitychange",checkReminders);
 if("serviceWorker"in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
 render();
+</script>
+<script>
+(() => {
+ const el=id=>document.getElementById(id);
+ const URL_BASE="https://ynkhnejglpglvctxpwzi.supabase.co";
+ const KEY="sb_publishable_HO8XSk3PoU0YL4ojux0hTg_DVDag3gY";
+ const db=window.supabase?.createClient(URL_BASE,KEY);
+ const DIRTY="myScheduleDirtyIds", DELETED="myScheduleDeletedIds";
+ let user=null, busy=Promise.resolve(), timer=null;
+ const read=k=>{try{return JSON.parse(localStorage.getItem(k)||"[]")}catch(_){return []}};
+ const write=(k,v)=>localStorage.setItem(k,JSON.stringify([...new Set(v)]));
+ const status=t=>{el("cloudStatus").textContent=t};
+ const isUuid=s=>/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s||"");
+ function mark(ids,deleted){write(DIRTY,read(DIRTY).concat(ids));write(DELETED,read(DELETED).concat(deleted));if(user){clearTimeout(timer);timer=setTimeout(()=>{busy=busy.then(sync).catch(()=>{});},1200)}}
+ window.scheduleCloudTrackChanges=(before,after)=>{
+   const b=new Map((before||[]).map(x=>[x.id,x])); const a=new Map((after||[]).map(x=>[x.id,x]));
+   const dirty=[]; const deleted=[];
+   for(const [id,item] of a){const prior=b.get(id);if(!prior||JSON.stringify(prior)!==JSON.stringify(item))dirty.push(id)}
+   for(const id of b.keys())if(!a.has(id))deleted.push(id);
+   if(dirty.length||deleted.length)mark(dirty,deleted);
+ };
+ function authState(session){user=session?.user||null;["cloudSignup","cloudLogin","cloudEmail","cloudPassword"].forEach(id=>el(id).disabled=!!user);el("cloudLogout").disabled=!user;el("cloudSync").disabled=!user;el("pushEnable").disabled=!user;status(user?"로그인됨: "+user.email+" · 변경 사항은 자동 동기화 대기 중":"로그인 전에는 이 기기에만 저장됩니다.");if(user){busy=busy.then(sync).catch(()=>{});}}
+ function urlBase64ToUint8Array(base64String){const padding="=".repeat((4-base64String.length%4)%4);const raw=atob((base64String+padding).replace(/-/g,"+").replace(/_/g,"/"));return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));}
+ el("pushEnable").onclick=async()=>{
+   const button=el("pushEnable");button.disabled=true;
+   try{
+     if(!user)throw new Error("먼저 로그인해 주세요.");
+     if(!("serviceWorker" in navigator)||!("PushManager" in window))throw new Error("이 브라우저는 웹 푸시를 지원하지 않습니다. iPhone은 Safari에서 홈 화면에 설치한 앱으로 실행해 주세요.");
+     if(!("Notification" in window))throw new Error("알림 기능을 사용할 수 없는 브라우저입니다.");
+     const permission=await Notification.requestPermission();if(permission!=="granted")throw new Error("알림 권한이 허용되지 않았습니다.");
+     const {data:sessionData,error:sessionError}=await db.auth.getSession();if(sessionError)throw sessionError;
+     const accessToken=sessionData.session?.access_token;if(!accessToken)throw new Error("로그인 세션을 확인할 수 없습니다.");
+     const response=await fetch(URL_BASE+"/functions/v1/schedule-push",{method:"GET",headers:{apikey:KEY,Authorization:"Bearer "+accessToken}});
+     const keyData=await response.json();if(!response.ok)throw new Error(keyData.error||"푸시 서버 설정을 확인해 주세요.");
+     const registration=await navigator.serviceWorker.ready;
+     let subscription=await registration.pushManager.getSubscription();
+     if(!subscription)subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(keyData.publicKey)});
+     const data=subscription.toJSON();const keys=data.keys||{};
+     if(!data.endpoint||!keys.p256dh||!keys.auth)throw new Error("푸시 구독 정보를 읽지 못했습니다.");
+     const {error:saveError}=await db.from("push_subscriptions").upsert({user_id:user.id,endpoint:data.endpoint,p256dh:keys.p256dh,auth:keys.auth,updated_at:new Date().toISOString()},{onConflict:"endpoint"});
+     if(saveError)throw saveError;
+     localStorage.setItem("mySchedulePushEnabled","true");
+     status("푸시 알림 구독 완료 · 서버 발송 예약 설정은 별도 단계가 남아 있습니다.");
+     alert("이 기기의 푸시 알림 구독이 완료됐습니다.");
+   }catch(error){status("푸시 설정 실패: "+(error.message||String(error)));alert("푸시 알림 설정 실패: "+(error.message||String(error)));}
+   finally{button.disabled=!user;}
+ };
+ if(!db){status("Supabase 라이브러리 로딩 실패");return;}
+ db.auth.getSession().then(({data,error})=>{if(error)status(error.message);authState(data?.session)});
+ db.auth.onAuthStateChange((_event,session)=>authState(session));
+ el("cloudSignup").onclick=async()=>{const email=el("cloudEmail").value.trim(),password=el("cloudPassword").value;if(!email||password.length<6)return alert("이메일과 6자 이상 비밀번호를 입력해 주세요.");const {data,error}=await db.auth.signUp({email,password,options:{emailRedirectTo:location.origin+location.pathname}});if(error)return alert("회원가입 실패: "+error.message);if(data.session)authState(data.session);else status("인증 메일을 확인한 뒤 로그인해 주세요.")};
+ el("cloudLogin").onclick=async()=>{const {data,error}=await db.auth.signInWithPassword({email:el("cloudEmail").value.trim(),password:el("cloudPassword").value});if(error)return alert("로그인 실패: "+error.message);authState(data.session)};
+ el("cloudLogout").onclick=async()=>{const {error}=await db.auth.signOut();if(error)alert(error.message);else authState(null)};
+ const toRow=e=>({id:e.id,user_id:user.id,title:e.title,description:null,starts_at:new Date(e.date+"T"+e.time+":00+09:00").toISOString(),timezone:"Asia/Seoul",repeat_rule:["none","daily","weekly","monthly"].includes(e.repeat)?e.repeat:"none",reminder_minutes:[Number(e.lead)||0],is_completed:!!e.done});
+ const fromRow=r=>{const p=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).formatToParts(new Date(r.starts_at));const v=Object.fromEntries(p.map(x=>[x.type,x.value]));return{id:r.id,title:r.title,date:v.year+"-"+v.month+"-"+v.day,time:v.hour+":"+v.minute,repeat:["none","daily","weekly","monthly"].includes(r.repeat_rule)?r.repeat_rule:"none",lead:Number(r.reminder_minutes?.[0]??0),done:!!r.is_completed}};
+ async function sync(){if(!user)return;const button=el("cloudSync");button.disabled=true;status("동기화 중…");try{
+   let changed=false;for(const e of entries)if(!isUuid(e.id)){e.id=crypto.randomUUID();changed=true;}if(changed)localStorage.setItem("myScheduleEntries",JSON.stringify(entries));
+   const dirty=new Set(read(DIRTY)),deleted=read(DELETED);
+   const {data:remote,error:readError}=await db.from("schedules").select("id,title,starts_at,repeat_rule,reminder_minutes,is_completed,deleted_at").eq("user_id",user.id);if(readError)throw readError;
+   const remoteMap=new Map((remote||[]).map(r=>[r.id,r]));
+   if(deleted.length){const {error}=await db.from("schedules").update({deleted_at:new Date().toISOString()}).eq("user_id",user.id).in("id",deleted);if(error)throw error;}
+   const localMap=new Map(entries.map(e=>[e.id,e]));
+   const toUpload=[];for(const [id,e] of localMap){const r=remoteMap.get(id);if(r?.deleted_at)continue;if(dirty.has(id)||!r)toUpload.push(toRow(e));}
+   if(toUpload.length){const {error}=await db.from("schedules").upsert(toUpload,{onConflict:"id"});if(error)throw error;}
+   const {data:latest,error:latestError}=await db.from("schedules").select("id,title,starts_at,repeat_rule,reminder_minutes,is_completed,deleted_at").eq("user_id",user.id);if(latestError)throw latestError;
+   const next=(latest||[]).filter(r=>!r.deleted_at).map(fromRow);
+   const deletedIds=new Set((latest||[]).filter(r=>r.deleted_at).map(r=>r.id));
+   const retainedLocal=entries.filter(e=>!deletedIds.has(e.id)&&!next.some(n=>n.id===e.id)&&!remoteMap.has(e.id));
+   entries=[...next,...retainedLocal];localStorage.setItem("myScheduleEntries",JSON.stringify(entries));write(DIRTY,[]);write(DELETED,[]);render();
+   status("동기화 완료 · 일정 "+entries.length+"개");
+ }catch(e){status("동기화 실패: "+(e.message||String(e)));}finally{button.disabled=!user}}
+ el("cloudSync").onclick=()=>{busy=busy.then(sync).catch(()=>{})};
+})();
 </script>
 </body></html>
