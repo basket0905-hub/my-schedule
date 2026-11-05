@@ -1,30 +1,37 @@
 # 규림's Schedule - Supabase 연결 준비
 
-이 문서는 클라우드 일정 동기화를 위한 Supabase 데이터베이스 준비 단계입니다.
+이 문서는 이미 존재하는 `public.schedules` 테이블에 맞춰 클라우드 동기화를 준비하는 단계입니다.
 
-## 1. 데이터 백업 먼저
-현재 사용 중인 앱에서 **일정 백업하기**를 눌러 JSON 파일을 PC 또는 안전한 위치에 보관하세요. 데이터베이스 연결 전 백업은 필수입니다.
+## 1. 데이터 백업
+현재 앱에서 **일정 백업하기**를 눌러 JSON 파일을 PC 또는 안전한 위치에 보관하세요.
 
-## 2. Supabase SQL 실행
-1. Supabase 대시보드에서 일정 앱 프로젝트를 엽니다.
-2. 왼쪽 메뉴에서 **SQL Editor**를 선택합니다.
-3. **New query**를 누릅니다.
-4. 이 저장소의 `supabase/schema.sql` 파일 내용을 복사해 붙여넣습니다.
-5. **Run**을 눌러 실행합니다.
-6. Table Editor에서 `public.schedules` 테이블이 생성됐는지 확인합니다.
+## 2. 현재 데이터베이스 구조
+이 프로젝트의 기존 `public.schedules` 테이블을 그대로 사용합니다.
 
-## 3. 인증 준비
-앱은 사용자별 일정 데이터를 분리하기 위해 Supabase Auth 로그인을 사용해야 합니다.
-초기 구현에서는 이메일 인증을 사용할 예정입니다. Supabase 대시보드의 Authentication 설정에서 이메일 로그인 제공 여부를 확인하세요.
+- `id`: uuid
+- `user_id`: uuid
+- `title`: text
+- `description`: text
+- `starts_at`: timestamptz
+- `timezone`: text
+- `repeat_rule`: text
+- `reminder_minutes`: integer[]
+- `is_completed`: boolean
+- `created_at`, `updated_at`: timestamptz
 
-## 4. 보안 주의
-- 브라우저 앱에는 Supabase Project URL과 publishable/anon 공개 키만 사용합니다.
-- `service_role` 키와 비밀 키는 HTML, JavaScript, GitHub 저장소에 절대 넣지 마세요.
-- schedules 테이블의 Row Level Security(RLS)를 끄지 마세요.
-- SQL 정책은 로그인한 사용자가 본인 user_id 행만 읽고 쓰도록 제한합니다.
+이 테이블에는 `schedule_date`, `schedule_time`, `lead_minutes`, `is_done` 컬럼이 없습니다. 앱과 SQL은 실제 컬럼명에 맞춰야 합니다.
 
-## 5. 현재 범위
-이 단계에서는 데이터베이스 스키마만 준비합니다. 아직 앱의 일정 저장 동작은 기존 기기 로컬 저장 방식이며, 클라우드 동기화가 활성화된 것은 아닙니다. SQL 실행과 인증 준비가 확인된 뒤 로그인 UI, 최초 가져오기, 클라우드 동기화를 순서대로 연결합니다.
+## 3. SQL 실행
+1. Supabase 대시보드에서 SQL Editor를 엽니다.
+2. 새 쿼리를 만듭니다.
+3. 이 저장소의 `supabase/schema.sql` 최신 내용을 붙여넣습니다.
+4. Run을 누릅니다.
 
-## 6. 기존 일정 가져오기 원칙
-최초 동기화는 기존 일정 백업을 확보한 뒤 진행합니다. 기존 데이터와 클라우드 데이터가 함께 존재하면 자동 삭제나 덮어쓰기를 하지 않고, 중복을 확인한 다음 합치는 방식으로 구현합니다.
+이 SQL은 기존 테이블을 생성/삭제/초기화하지 않습니다. `user_id, starts_at` 인덱스와 `updated_at` 갱신 트리거만 준비합니다. 기존 RLS 정책 `Manage own schedules`는 유지합니다.
+
+## 4. 보안
+현재 확인된 RLS 정책은 `authenticated` 사용자에게 `auth.uid() = user_id` 조건으로 본인 행의 ALL 작업을 허용합니다. RLS를 끄거나 정책을 무조건 교체하지 마세요.
+브라우저에는 Supabase Project URL과 publishable/anon 공개 키만 사용합니다. service_role 키와 VAPID private key는 HTML, JavaScript, GitHub 저장소에 넣지 마세요.
+
+## 5. 동기화 상태
+이 SQL을 실행해도 앱의 클라우드 동기화가 바로 활성화되지는 않습니다. 현재 앱은 로컬 저장 방식입니다. 다음 단계에서 로그인, 기존 일정 가져오기, 로컬 일정과 클라우드 일정의 안전한 병합을 구현해야 합니다.
