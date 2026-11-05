@@ -10,6 +10,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <title>규림's Schedule</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#f3f5f9}
 *{box-sizing:border-box}body{margin:0;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
@@ -35,6 +36,14 @@ footer{text-align:center;color:#98a1b1;font-size:11px;padding:20px}
 <body>
 <header><small>MY PERSONAL PLANNER</small><h1>규림's Schedule</h1><div class="date" id="today"></div></header>
 <main>
+<section class="panel" id="cloudPanel">
+<h2>클라우드 계정 및 동기화</h2>
+<div class="field"><label for="cloudEmail">이메일</label><input id="cloudEmail" type="email" autocomplete="email" placeholder="이메일 주소"></div>
+<div class="field"><label for="cloudPassword">비밀번호</label><input id="cloudPassword" type="password" autocomplete="current-password" placeholder="비밀번호 (6자 이상)"></div>
+<div class="actions"><button class="secondary" id="cloudSignup" type="button">회원가입</button><button id="cloudLogin" type="button">로그인</button><button class="secondary" id="cloudLogout" type="button" disabled>로그아웃</button></div>
+<div class="actions" style="margin-top:10px"><button id="cloudSync" type="button" disabled>☁️ 지금 동기화</button></div>
+<div id="cloudStatus" class="meta">로그인 전에는 일정이 이 기기에만 저장됩니다.</div>
+</section>
 <section class="panel">
 <h2>새 일정 등록</h2>
 <div class="field"><label for="title">일정 내용</label><input id="title" placeholder="예: 병원 예약, 운동, 회의"></div>
@@ -163,5 +172,23 @@ function checkReminders(){
 setInterval(checkReminders,15000);document.addEventListener("visibilitychange",checkReminders);
 if("serviceWorker"in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
 render();
+</script>
+<script>
+(() => {
+ const el = id => document.getElementById(id);
+ const db = window.supabase?.createClient("https://ynkhnejglpglvctxpwzi.supabase.co","sb_publishable_HO8XSk3PoU0YL4ojux0hTg_DVDag3gY");
+ let user = null;
+ const msg = t => el("cloudStatus").textContent=t;
+ function state(session){ user=session?.user||null; ["cloudSignup","cloudLogin","cloudEmail","cloudPassword"].forEach(id=>el(id).disabled=!!user); el("cloudLogout").disabled=!user; el("cloudSync").disabled=!user; msg(user?"로그인됨: "+user.email:"로그인 전에는 이 기기에만 일정이 저장됩니다."); }
+ if(!db){msg("Supabase 라이브러리 로딩 실패");return;}
+ db.auth.getSession().then(({data,error})=>{if(error)msg(error.message);state(data?.session);});
+ db.auth.onAuthStateChange((_event,session)=>state(session));
+ el("cloudSignup").onclick=async()=>{const email=el("cloudEmail").value.trim(),password=el("cloudPassword").value;if(!email||password.length<6)return alert("이메일과 6자 이상 비밀번호를 입력해 주세요.");const {data,error}=await db.auth.signUp({email,password,options:{emailRedirectTo:location.origin+location.pathname}});if(error)return alert("회원가입 실패: "+error.message);if(data.session)state(data.session);else msg("인증 메일을 확인한 뒤 로그인해 주세요.");};
+ el("cloudLogin").onclick=async()=>{const {data,error}=await db.auth.signInWithPassword({email:el("cloudEmail").value.trim(),password:el("cloudPassword").value});if(error)return alert("로그인 실패: "+error.message);state(data.session);};
+ el("cloudLogout").onclick=async()=>{const {error}=await db.auth.signOut();if(error)alert(error.message);else state(null);};
+ const toRow=e=>({id:e.id,user_id:user.id,title:e.title,description:null,starts_at:new Date(e.date+"T"+e.time+":00+09:00").toISOString(),timezone:"Asia/Seoul",repeat_rule:["none","daily","weekly","monthly"].includes(e.repeat)?e.repeat:"none",reminder_minutes:[Number(e.lead)||0],is_completed:!!e.done});
+ const fromRow=r=>{const p=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).formatToParts(new Date(r.starts_at));const v=Object.fromEntries(p.map(x=>[x.type,x.value]));return {id:r.id,title:r.title,date:v.year+"-"+v.month+"-"+v.day,time:v.hour+":"+v.minute,repeat:["none","daily","weekly","monthly"].includes(r.repeat_rule)?r.repeat_rule:"none",lead:Number(r.reminder_minutes?.[0]??0),done:!!r.is_completed};};
+ el("cloudSync").onclick=async()=>{if(!user)return;const b=el("cloudSync");b.disabled=true;msg("클라우드 일정 확인 중…");try{let changed=false;for(const e of entries){if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(e.id)){e.id=crypto.randomUUID();changed=true;}}if(changed)localStorage.setItem("myScheduleEntries",JSON.stringify(entries));const {data:cloud,error:readError}=await db.from("schedules").select("id,title,starts_at,repeat_rule,reminder_minutes,is_completed").eq("user_id",user.id);if(readError)throw readError;const ids=new Set((cloud||[]).map(r=>r.id));const localOnly=entries.filter(e=>!ids.has(e.id));if(localOnly.length){const {error}=await db.from("schedules").upsert(localOnly.map(toRow),{onConflict:"id"});if(error)throw error;}const merged=new Map(entries.map(e=>[e.id,e]));for(const r of cloud||[])merged.set(r.id,fromRow(r));entries=[...merged.values()];localStorage.setItem("myScheduleEntries",JSON.stringify(entries));render();msg("동기화 완료: "+entries.length+"개. 기존 클라우드 일정 우선 보존. 삭제 동기화는 아직 미지원.");}catch(e){msg("동기화 실패: "+e.message);alert("동기화 실패: "+e.message);}finally{b.disabled=!user;}};
+})();
 </script>
 </body></html>
