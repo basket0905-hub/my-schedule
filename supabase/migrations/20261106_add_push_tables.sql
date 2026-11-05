@@ -32,6 +32,10 @@ create table if not exists public.schedule_push_deliveries (
   unique(schedule_id, occurrence_at, reminder_minutes)
 );
 
+alter table public.schedule_push_deliveries drop constraint if exists schedule_push_deliveries_status_check;
+alter table public.schedule_push_deliveries add constraint schedule_push_deliveries_status_check
+  check (status in ('queued','sending','sent','partial','no_subscription','failed'));
+
 alter table public.schedule_push_deliveries enable row level security;
 -- No client policies: only the Edge Function's service-role client can access delivery records.
 create index if not exists schedule_push_deliveries_user_created_idx
