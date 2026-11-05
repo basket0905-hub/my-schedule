@@ -145,8 +145,10 @@ $("notifyBtn").onclick=async()=>{
  if(!("Notification"in window)){alert("이 브라우저는 알림을 지원하지 않습니다.");return}
  const p=await Notification.requestPermission();$("status").textContent="알림 권한: "+p+(p==="granted"?" · 단, 이 첫 버전은 앱이 열려 있을 때 알림을 확인합니다.":"");
 };
-$("speakBtn").onclick=()=>speak("규림's Schedule 음성 안내 테스트입니다. 일정 관리 앱이 정상적으로 실행되고 있습니다.");
-function speak(t){if(!("speechSynthesis"in window)){alert("이 브라우저는 음성 읽기를 지원하지 않습니다.");return}speechSynthesis.cancel();speechSynthesis.speak(new SpeechSynthesisUtterance(t))}
+let pendingNotificationSpeech=new URLSearchParams(location.search).get("speak");
+$("speakBtn").onclick=()=>speak(pendingNotificationSpeech||"규림's Schedule 음성 안내 테스트입니다. 일정 관리 앱이 정상적으로 실행되고 있습니다.");
+if(pendingNotificationSpeech){$("speakBtn").textContent="🔊 일정 음성 안내 다시 듣기";$("status").textContent="푸시 알림에서 열린 일정입니다. 음성 안내를 시도합니다. 소리가 나지 않으면 아래 '일정 음성 안내 다시 듣기'를 눌러 주세요.";window.addEventListener("load",()=>setTimeout(()=>speak(pendingNotificationSpeech),900),{once:true});}
+function speak(t){if(!("speechSynthesis"in window)){alert("이 브라우저는 음성 읽기를 지원하지 않습니다.");return}speechSynthesis.cancel();const utterance=new SpeechSynthesisUtterance(t);utterance.lang="ko-KR";utterance.rate=1;utterance.pitch=1;speechSynthesis.speak(utterance)}
 $("voiceBtn").onclick=()=>{
  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
  if(!SR){alert("현재 브라우저에서 음성 입력을 지원하지 않습니다. 일정 내용을 직접 입력해 주세요.");return}
