@@ -83,7 +83,7 @@ $("today").textContent=today.toLocaleDateString("ko-KR",{year:"numeric",month:"l
 $("date").value=localDate(today);
 let entries=JSON.parse(localStorage.getItem("myScheduleEntries")||"[]");
 let editing=null;
-function persist(){localStorage.setItem("myScheduleEntries",JSON.stringify(entries));render();if(window.scheduleCloudQueueChange)window.scheduleCloudQueueChange()}
+function persist(){const previous=JSON.parse(localStorage.getItem("myScheduleEntries")||"[]");if(window.scheduleCloudTrackChanges)window.scheduleCloudTrackChanges(previous,entries);localStorage.setItem("myScheduleEntries",JSON.stringify(entries));render()}
 function repeatText(v){return ({none:"반복 없음",daily:"매일",weekly:"매주",monthly:"매월"})[v]||v}
 function render(){
  const el=$("list");el.innerHTML="";
@@ -99,7 +99,7 @@ function render(){
   const pill=document.createElement("span");pill.className="pill";pill.textContent=repeatText(e.repeat);
   body.append(title,meta,pill);
   const edit=document.createElement("button");edit.className="secondary";edit.textContent="수정";edit.onclick=()=>loadEdit(e.id);
-  const del=document.createElement("button");del.className="danger";del.textContent="삭제";del.onclick=()=>{if(confirm("이 일정을 삭제할까요?")){if(window.scheduleCloudMarkDeleted)window.scheduleCloudMarkDeleted(e.id);entries=entries.filter(x=>x.id!==e.id);persist()}};
+  const del=document.createElement("button");del.className="danger";del.textContent="삭제";del.onclick=()=>{if(confirm("이 일정을 삭제할까요?")){entries=entries.filter(x=>x.id!==e.id);persist()}};
   const tools=document.createElement("div");tools.style.cssText="display:flex;flex-direction:column;gap:5px";tools.append(edit,del);
   div.append(check,body,tools);el.append(div);
  });
@@ -175,116 +175,50 @@ render();
 </script>
 <script>
 (() => {
- const el = id => document.getElementById(id);
- const SUPABASE_URL = "https://ynkhnejglpglvctxpwzi.supabase.co";
- const SUPABASE_KEY = "sb_publishable_HO8XSk3PoU0YL4ojux0hTg_DVDag3gY";
- const db = window.supabase?.createClient(SUPABASE_URL, SUPABASE_KEY);
- let user = null;
- let syncPromise = Promise.resolve();
- let syncTimer = null;
- const DELETED_KEY = "myScheduleDeletedIds";
- const UPDATED_KEY = "myScheduleUpdatedAt";
- const msg = t => { el("cloudStatus").textContent = t; };
- const uuid = s => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s || "");
- const readDeleted = () => { try { return JSON.parse(localStorage.getItem(DELETED_KEY) || "[]"); } catch (_) { return []; } };
- const writeDeleted = a => localStorage.setItem(DELETED_KEY, JSON.stringify([...new Set(a)]));
- const readUpdated = () => { try { return JSON.parse(localStorage.getItem(UPDATED_KEY) || "{}"); } catch (_) { return {}; } };
- const writeUpdated = a => localStorage.setItem(UPDATED_KEY, JSON.stringify(a));
- function state(session) {
-   user = session?.user || null;
-   ["cloudSignup","cloudLogin","cloudEmail","cloudPassword"].forEach(id => el(id).disabled = !!user);
-   el("cloudLogout").disabled = !user;
-   el("cloudSync").disabled = !user;
-   msg(user ? "로그인됨: " + user.email + " · 변경 사항은 온라인 상태에서 자동 동기화됩니다." : "로그인 전에는 일정이 이 기기에만 저장됩니다.");
- }
- if (!db) { msg("Supabase 라이브러리 로딩 실패"); return; }
- db.auth.getSession().then(({data,error}) => { if(error) msg(error.message); state(data?.session); });
- db.auth.onAuthStateChange((_event,session) => state(session));
- el("cloudSignup").onclick = async () => {
-   const email=el("cloudEmail").value.trim(), password=el("cloudPassword").value;
-   if(!email || password.length<6) return alert("이메일과 6자 이상 비밀번호를 입력해 주세요.");
-   const {data,error}=await db.auth.signUp({email,password,options:{emailRedirectTo:location.origin+location.pathname}});
-   if(error) return alert("회원가입 실패: "+error.message);
-   if(data.session) state(data.session); else msg("인증 메일을 확인한 뒤 로그인해 주세요.");
+ const el=id=>document.getElementById(id);
+ const URL_BASE="https://ynkhnejglpglvctxpwzi.supabase.co";
+ const KEY="sb_publishable_HO8XSk3PoU0YL4ojux0hTg_DVDag3gY";
+ const db=window.supabase?.createClient(URL_BASE,KEY);
+ const DIRTY="myScheduleDirtyIds", DELETED="myScheduleDeletedIds";
+ let user=null, busy=Promise.resolve(), timer=null;
+ const read=k=>{try{return JSON.parse(localStorage.getItem(k)||"[]")}catch(_){return []}};
+ const write=(k,v)=>localStorage.setItem(k,JSON.stringify([...new Set(v)]));
+ const status=t=>{el("cloudStatus").textContent=t};
+ const isUuid=s=>/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s||"");
+ function mark(ids,deleted){write(DIRTY,read(DIRTY).concat(ids));write(DELETED,read(DELETED).concat(deleted));if(user){clearTimeout(timer);timer=setTimeout(()=>{busy=busy.then(sync).catch(()=>{});},1200)}}
+ window.scheduleCloudTrackChanges=(before,after)=>{
+   const b=new Map((before||[]).map(x=>[x.id,x])); const a=new Map((after||[]).map(x=>[x.id,x]));
+   const dirty=[]; const deleted=[];
+   for(const [id,item] of a){const prior=b.get(id);if(!prior||JSON.stringify(prior)!==JSON.stringify(item))dirty.push(id)}
+   for(const id of b.keys())if(!a.has(id))deleted.push(id);
+   if(dirty.length||deleted.length)mark(dirty,deleted);
  };
- el("cloudLogin").onclick = async () => {
-   const {data,error}=await db.auth.signInWithPassword({email:el("cloudEmail").value.trim(),password:el("cloudPassword").value});
-   if(error) return alert("로그인 실패: "+error.message);
-   state(data.session);
- };
- el("cloudLogout").onclick = async () => {
-   const {error}=await db.auth.signOut();
-   if(error) alert(error.message); else state(null);
- };
- const toRow = e => {
-   const meta=readUpdated();
-   return {id:e.id,user_id:user.id,title:e.title,description:null,starts_at:new Date(e.date+"T"+e.time+":00+09:00").toISOString(),timezone:"Asia/Seoul",repeat_rule:["none","daily","weekly","monthly"].includes(e.repeat)?e.repeat:"none",reminder_minutes:[Number(e.lead)||0],is_completed:!!e.done,updated_at:meta[e.id] || new Date(0).toISOString()};
- };
- const fromRow = r => {
-   const p=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).formatToParts(new Date(r.starts_at));
-   const v=Object.fromEntries(p.map(x=>[x.type,x.value]));
-   return {id:r.id,title:r.title,date:v.year+"-"+v.month+"-"+v.day,time:v.hour+":"+v.minute,repeat:["none","daily","weekly","monthly"].includes(r.repeat_rule)?r.repeat_rule:"none",lead:Number(r.reminder_minutes?.[0]??0),done:!!r.is_completed};
- };
- async function syncNow() {
-   if(!user) return;
-   const button=el("cloudSync"); button.disabled=true; msg("변경 사항을 안전하게 동기화하는 중…");
-   try {
-     let changed=false;
-     for(const e of entries) if(!uuid(e.id)){const old=e.id;e.id=crypto.randomUUID();const meta=readUpdated();if(meta[old]){meta[e.id]=meta[old];delete meta[old];writeUpdated(meta)}changed=true;}
-     if(changed) localStorage.setItem("myScheduleEntries",JSON.stringify(entries));
-     const deleted=readDeleted();
-     if(deleted.length){
-       const {error}=await db.from("schedules").delete().eq("user_id",user.id).in("id",deleted);
-       if(error) throw error;
-     }
-     const {data:cloud,error:readError}=await db.from("schedules").select("id,title,starts_at,repeat_rule,reminder_minutes,is_completed,updated_at").eq("user_id",user.id);
-     if(readError) throw readError;
-     const localMap=new Map(entries.map(e=>[e.id,e]));
-     const remoteMap=new Map((cloud||[]).map(r=>[r.id,r]));
-     const meta=readUpdated();
-     const merged=new Map();
-     for(const [id,e] of localMap){
-       const r=remoteMap.get(id);
-       if(!r){merged.set(id,e);continue;}
-       const localTime=Date.parse(meta[id]||0);
-       const remoteTime=Date.parse(r.updated_at||0);
-       if(localTime>remoteTime) merged.set(id,e);
-       else merged.set(id,fromRow(r));
-     }
-     for(const [id,r] of remoteMap) if(!localMap.has(id)) merged.set(id,fromRow(r));
-     const rows=[...merged.values()].map(toRow);
-     if(rows.length){
-       const {error:upsertError}=await db.from("schedules").upsert(rows,{onConflict:"id"});
-       if(upsertError) throw upsertError;
-     }
-     const {data:verified,error:verifyError}=await db.from("schedules").select("id,title,starts_at,repeat_rule,reminder_minutes,is_completed,updated_at").eq("user_id",user.id);
-     if(verifyError) throw verifyError;
-     const verifiedMap=new Map((verified||[]).map(r=>[r.id,r]));
-     entries=[...verifiedMap.values()].map(fromRow);
-     localStorage.setItem("myScheduleEntries",JSON.stringify(entries));
-     const newMeta={};
-     for(const r of verified||[]) newMeta[r.id]=r.updated_at||new Date().toISOString();
-     writeUpdated(newMeta);
-     writeDeleted([]);
-     render();
-     msg("동기화 완료 · 일정 "+entries.length+"개 · 등록/수정/완료/삭제 반영됨");
-   } catch(e) {
-     msg("동기화 실패: "+(e.message||String(e)));
-     alert("동기화 실패: "+(e.message||String(e))+"\n인터넷 연결과 Supabase 권한을 확인해 주세요.");
-   } finally { button.disabled=!user; }
- }
- function enqueue() {
-   if(!user) return;
-   const meta=readUpdated();
-   const now=new Date().toISOString();
-   for(const e of entries) meta[e.id]=now;
-   writeUpdated(meta);
-   clearTimeout(syncTimer);
-   syncTimer=setTimeout(()=>{syncPromise=syncPromise.then(syncNow).catch(()=>{});},900);
- }
- window.scheduleCloudQueueChange=enqueue;
- window.scheduleCloudMarkDeleted=id=>writeDeleted(readDeleted().concat([id]));
- el("cloudSync").onclick=()=>{syncPromise=syncPromise.then(syncNow).catch(()=>{});};
+ function authState(session){user=session?.user||null;["cloudSignup","cloudLogin","cloudEmail","cloudPassword"].forEach(id=>el(id).disabled=!!user);el("cloudLogout").disabled=!user;el("cloudSync").disabled=!user;status(user?"로그인됨: "+user.email+" · 변경 사항은 자동 동기화 대기 중":"로그인 전에는 이 기기에만 저장됩니다.");if(user){busy=busy.then(sync).catch(()=>{});}}
+ if(!db){status("Supabase 라이브러리 로딩 실패");return;}
+ db.auth.getSession().then(({data,error})=>{if(error)status(error.message);authState(data?.session)});
+ db.auth.onAuthStateChange((_event,session)=>authState(session));
+ el("cloudSignup").onclick=async()=>{const email=el("cloudEmail").value.trim(),password=el("cloudPassword").value;if(!email||password.length<6)return alert("이메일과 6자 이상 비밀번호를 입력해 주세요.");const {data,error}=await db.auth.signUp({email,password,options:{emailRedirectTo:location.origin+location.pathname}});if(error)return alert("회원가입 실패: "+error.message);if(data.session)authState(data.session);else status("인증 메일을 확인한 뒤 로그인해 주세요.")};
+ el("cloudLogin").onclick=async()=>{const {data,error}=await db.auth.signInWithPassword({email:el("cloudEmail").value.trim(),password:el("cloudPassword").value});if(error)return alert("로그인 실패: "+error.message);authState(data.session)};
+ el("cloudLogout").onclick=async()=>{const {error}=await db.auth.signOut();if(error)alert(error.message);else authState(null)};
+ const toRow=e=>({id:e.id,user_id:user.id,title:e.title,description:null,starts_at:new Date(e.date+"T"+e.time+":00+09:00").toISOString(),timezone:"Asia/Seoul",repeat_rule:["none","daily","weekly","monthly"].includes(e.repeat)?e.repeat:"none",reminder_minutes:[Number(e.lead)||0],is_completed:!!e.done});
+ const fromRow=r=>{const p=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).formatToParts(new Date(r.starts_at));const v=Object.fromEntries(p.map(x=>[x.type,x.value]));return{id:r.id,title:r.title,date:v.year+"-"+v.month+"-"+v.day,time:v.hour+":"+v.minute,repeat:["none","daily","weekly","monthly"].includes(r.repeat_rule)?r.repeat_rule:"none",lead:Number(r.reminder_minutes?.[0]??0),done:!!r.is_completed}};
+ async function sync(){if(!user)return;const button=el("cloudSync");button.disabled=true;status("동기화 중…");try{
+   let changed=false;for(const e of entries)if(!isUuid(e.id)){e.id=crypto.randomUUID();changed=true;}if(changed)localStorage.setItem("myScheduleEntries",JSON.stringify(entries));
+   const dirty=new Set(read(DIRTY)),deleted=read(DELETED);
+   const {data:remote,error:readError}=await db.from("schedules").select("id,title,starts_at,repeat_rule,reminder_minutes,is_completed,deleted_at").eq("user_id",user.id);if(readError)throw readError;
+   const remoteMap=new Map((remote||[]).map(r=>[r.id,r]));
+   if(deleted.length){const {error}=await db.from("schedules").update({deleted_at:new Date().toISOString()}).eq("user_id",user.id).in("id",deleted);if(error)throw error;}
+   const localMap=new Map(entries.map(e=>[e.id,e]));
+   const toUpload=[];for(const [id,e] of localMap){const r=remoteMap.get(id);if(r?.deleted_at)continue;if(dirty.has(id)||!r)toUpload.push(toRow(e));}
+   if(toUpload.length){const {error}=await db.from("schedules").upsert(toUpload,{onConflict:"id"});if(error)throw error;}
+   const {data:latest,error:latestError}=await db.from("schedules").select("id,title,starts_at,repeat_rule,reminder_minutes,is_completed,deleted_at").eq("user_id",user.id);if(latestError)throw latestError;
+   const next=(latest||[]).filter(r=>!r.deleted_at).map(fromRow);
+   const deletedIds=new Set((latest||[]).filter(r=>r.deleted_at).map(r=>r.id));
+   const retainedLocal=entries.filter(e=>!deletedIds.has(e.id)&&!next.some(n=>n.id===e.id)&&!remoteMap.has(e.id));
+   entries=[...next,...retainedLocal];localStorage.setItem("myScheduleEntries",JSON.stringify(entries));write(DIRTY,[]);write(DELETED,[]);render();
+   status("동기화 완료 · 일정 "+entries.length+"개");
+ }catch(e){status("동기화 실패: "+(e.message||String(e)));}finally{button.disabled=!user}}
+ el("cloudSync").onclick=()=>{busy=busy.then(sync).catch(()=>{})};
 })();
 </script>
 </body></html>
