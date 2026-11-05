@@ -51,9 +51,13 @@ serve(async (req) => {
       const occurrence = new Date(minute.getTime() + lead * 60000);
       if (!matchesOccurrence(anchor, occurrence, rule, zone)) continue;
       checked++;
-      const { data: delivery, error: insertError } = await db.from("schedule_push_deliveries").upsert({ schedule_id: item.id, user_id: item.user_id, occurrence_at: occurrence.toISOString(), reminder_minutes: lead, status: "queued" }, { onConflict: "schedule_id,occurrence_at,reminder_minutes", ignoreDuplicates: true }).select("id").maybeSingle();
+      const { error: insertError } = await db.from("schedule_push_deliveries").upsert({ schedule_id: item.id, user_id: item.user_id, occurrence_at: occurrence.toISOString(), reminder_minutes: lead, status: "queued" }, { onConflict: "schedule_id,occurrence_at,reminder_minutes", ignoreDuplicates: true });
       if (insertError) { failed++; continue; }
-      if (!delivery) continue;
+      const { data: delivery, error: lookupError } = await db.from("schedule_push_deliveries").select("id,status").eq("schedule_id", item.id).eq("occurrence_at", occurrence.toISOString()).eq("reminder_minutes", lead).maybeSingle();
+      if (lookupError || !delivery) { failed++; continue; }
+      if (["sent", "partial", "sending"].includes(delivery.status)) continue;
+      const { data: claim, error: claimError } = await db.from("schedule_push_deliveries").update({ status: "sending" }).eq("id", delivery.id).in("status", ["queued", "failed", "no_subscription"]).select("id").maybeSingle();
+      if (claimError || !claim) { if (claimError) failed++; continue; }
       const { data: subscriptions, error: subError } = await db.from("push_subscriptions").select("id,endpoint,p256dh,auth").eq("user_id", item.user_id);
       if (subError) { await db.from("schedule_push_deliveries").update({ status: "failed" }).eq("id", delivery.id); failed++; continue; }
       if (!subscriptions?.length) { await db.from("schedule_push_deliveries").update({ status: "no_subscription" }).eq("id", delivery.id); continue; }
