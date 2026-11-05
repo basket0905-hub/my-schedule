@@ -30,13 +30,15 @@ serve(async (req) => {
   if (!supabaseUrl || !serviceKey) return json({ error: "Supabase environment is not configured" }, 500);
   const authHeader = req.headers.get("Authorization") || "";
   const token = authHeader.replace(/^Bearer\s+/i, "");
+  const db = createClient(supabaseUrl, serviceKey);
   if (req.method === "GET") {
     if (!token) return json({ error: "Authentication required" }, 401);
+    const { data: authData, error: authError } = await db.auth.getUser(token);
+    if (authError || !authData.user) return json({ error: "Invalid or expired session" }, 401);
     return publicKey ? json({ publicKey }) : json({ error: "VAPID public key is not configured" }, 503);
   }
   if (req.method !== "POST" || token !== serviceKey) return json({ error: "Forbidden" }, 403);
   if (!publicKey || !privateKey) return json({ error: "VAPID keys are not configured" }, 500);
-  const db = createClient(supabaseUrl, serviceKey);
   webpush.setVapidDetails(subject, publicKey, privateKey);
   const now = new Date(); const minute = new Date(Math.floor(now.getTime() / 60000) * 60000);
   const { data: schedules, error: scheduleError } = await db.from("schedules").select("id,user_id,title,starts_at,timezone,repeat_rule,reminder_minutes,is_completed,deleted_at").eq("is_completed", false).is("deleted_at", null);
