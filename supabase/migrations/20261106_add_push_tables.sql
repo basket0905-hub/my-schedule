@@ -26,7 +26,7 @@ create table if not exists public.schedule_push_deliveries (
   user_id uuid not null references auth.users(id) on delete cascade,
   occurrence_at timestamptz not null,
   reminder_minutes integer not null default 0,
-  status text not null default 'queued' check (status in ('queued','sent','partial','no_subscription','failed')),
+  status text not null default 'queued' check (status in ('queued','sending','sent','partial','no_subscription','failed')),
   sent_at timestamptz,
   created_at timestamptz not null default now(),
   unique(schedule_id, occurrence_at, reminder_minutes)
