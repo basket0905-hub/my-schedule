@@ -7,6 +7,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const env = (name: string) => Deno.env.get(name) || "";
 const supabaseUrl = env("SUPABASE_URL");
 const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
+const cronSecret = env("SCHEDULE_PUSH_CRON_SECRET");
 const publicKey = env("VAPID_PUBLIC_KEY");
 const privateKey = env("VAPID_PRIVATE_KEY");
 const subject = env("VAPID_SUBJECT") || "mailto:admin@example.com";
@@ -37,7 +38,7 @@ serve(async (req) => {
     if (authError || !authData.user) return json({ error: "Invalid or expired session" }, 401);
     return publicKey ? json({ publicKey }) : json({ error: "VAPID public key is not configured" }, 503);
   }
-  if (req.method !== "POST" || token !== serviceKey) return json({ error: "Forbidden" }, 403);
+  if (req.method !== "POST" || !cronSecret || token !== cronSecret) return json({ error: "Forbidden" }, 403);
   if (!publicKey || !privateKey) return json({ error: "VAPID keys are not configured" }, 500);
   webpush.setVapidDetails(subject, publicKey, privateKey);
   const now = new Date(); const minute = new Date(Math.floor(now.getTime() / 60000) * 60000);
